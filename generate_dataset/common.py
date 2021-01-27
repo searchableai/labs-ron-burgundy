@@ -78,7 +78,7 @@ def ngrams(n: int, tokens: List[Token], skip: bool=False) -> List[NGram]:
     # if n is 1, we want len(tokens), etc..
     slices = [tokens[i:(i+n)] for i in range(len(tokens) - n + 1)]
 
-    return [make_gram(slic) for slic in slices if stopwords_filter(slic)]
+    return [make_gram(sl) for sl in slices if stopwords_filter(sl)]
 
 def distinct_grams(grams: List[NGram]) -> List[str]:
     """ Return the distinct grams from a bunch of ngrams """
@@ -104,11 +104,12 @@ def all_grams(
 
 
 class AnswerConfidence(NamedTuple):
-    q: str
-    confidence: float
+    text: int
+    score: float
+    em: float
 
 
-def ngram_overlap(sentences, query, remove_list: List, stem=True, alpha_only=True) -> [AnswerConfidence]:
+def ngram_overlap(sentences, query, remove_list: List, stem=True, alpha_only=False) -> [AnswerConfidence]:
     if not isinstance(sentences, List):
         if not isinstance(sentences, str):
             raise Exception('Sentences must be a list of strings or single string')
@@ -130,7 +131,7 @@ def ngram_overlap(sentences, query, remove_list: List, stem=True, alpha_only=Tru
     #print({k:query_weights[k] for k in query_ngrams.keys()})
 
     if not query_ngrams:
-        return [AnswerConfidence(n, confidence=0.)
+        return [AnswerConfidence(text=sentences[n], score=0., em=0.)
             for n in range(len(sentences))]
 
     norm_factor = sum([v*query_weights[k] for k,v in query_ngrams.items()])
@@ -147,7 +148,12 @@ def ngram_overlap(sentences, query, remove_list: List, stem=True, alpha_only=Tru
                 olaps[n][k] -= s[k]
                 olaps[n][k] = max(olaps[n][k], 0.)
 
+        #print('===', s, '\n', query_ngrams, len(query_ngrams), '\nscore', olaps[n], 1-sum([j*query_weights[i] for i,j in olaps[n].items()])/norm_factor, norm_factor, sum([query_ngrams[i]-j for i,j in olaps[n].items()]), sum([query_ngrams[i]-j for i,j in olaps[n].items()])/len(query_ngrams))
         scores.append(
             AnswerConfidence(
-                n, 1-sum([v*query_weights[k] for k,v in olaps[n].items()])/norm_factor))
+                text=sentences[n],
+                score=1-sum([j*query_weights[i] for i,j in olaps[n].items()])/norm_factor,
+                em=sum([query_ngrams[i]-j for i,j in olaps[n].items()])/len(query_ngrams),
+            )
+        )
     return scores
