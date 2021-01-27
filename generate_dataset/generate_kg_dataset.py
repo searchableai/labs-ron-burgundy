@@ -143,6 +143,13 @@ def _es_search(query: List, dt_episode, meta: Dict, es_index='npr-articles-lg-20
         if relativedelta(dt_episode, dt_doc).years in [1, 0]:
             time_filter_res.append(doc)
 
+    # If there are no results, it likely means the turn window used
+    # to create the query did not include a diverse set of keywords.
+    # In this case, we return an empty list instead of filtering
+    # by score below
+    if not res:
+        return []
+
     mean_score = [x['score'] for x in res]
     mean_score = sum(mean_score)/len(mean_score)
 
@@ -221,8 +228,8 @@ def rerank_sents(turns: List, turn_refs: Dict, top_k: int=4, min_turn_toks: int=
             sorted_answers = []
         else:
             answers = ngram_overlap(sentences, ' '.join(query), remove_list)
-            sorted_answers = sorted(answers, key=lambda x: x[1], reverse=True)
-            sorted_answers = [(sentences[x[0]], x[1]) for x in sorted_answers][:top_k]
+            sorted_answers = sorted(answers, key=lambda x: x.score, reverse=True)
+            sorted_answers = [(sentences[x.n], x.score) for x in sorted_answers][:top_k]
             sorted_answers = [x for x in sorted_answers if x[1] > score_thre]
         epi_sents.append(sorted_answers)
 
@@ -256,7 +263,7 @@ if __name__ == "__main__":
 
     outfile = 'npr_kg_dialogue_lg.jsonl'
 
-    data, meta = preprocess_data(restart=False, outfile=outfile)
+    data, meta = preprocess_data(restart=True, outfile=outfile)
     data = postprocess_data(data)
     #Uncomment to select single episode for testing
     #data = {'1':data['1']}
