@@ -15,11 +15,23 @@ remove_list = [x.lower() for x in stop_words]
 
 
 def evaluate(data):
+    # Accuracy and precision of the ngram_overlap "score", which is
+    # a weighted average of ngrams, with non-unigrams weighted
+    # more heavily. Precision reflects the overlap between turns
+    # and kg_sents where kg_sents are present. Accuracy assigns
+    # turns without kg_sents a score of zero.
     epi_scores = {}
     epi_scores.update({'accuracy':{}, 'precision':{}})
+
+    # Accuracy and precision of the exact match (em) ngram score
+    # which is the average number of ngrams matches divided by
+    # the total possible of ngram matches in each turn.
     epi_em = {}
     epi_em.update({'accuracy':{}, 'precision':{}})
+
+    # Record the average number of turns that do not contain kg_sents
     null_turns = {}
+
     for k,v in data.items():
         turn_scores_acc = {}
         turn_scores_prec = {}
