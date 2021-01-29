@@ -14,8 +14,8 @@ with open('../../all_headline_archive_texts.json', 'r') as f:
 # indices for this turn.
 
 # Below, we extract the following:
-#   ref_sents: full list of sentence tokenized articles associated with the k-th turn
-#   gold_sent_indices: one-hot encoded relevant sents in ref_sents list
+#   episode_context: full list of sentence tokenized articles associated with the k-th turn
+#   gold_sent_indices: one-hot encoded relevant sents in episode_context list
 #   dialogue_history: the 0:k-1 turns of dialogue, for the k-th turn
 
 episode_inputs = {}
