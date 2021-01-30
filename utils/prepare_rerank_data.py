@@ -1,5 +1,7 @@
-from nltk.tokenize import sent_tokenize
 import json
+import math
+from nltk.tokenize import sent_tokenize
+from nltk.translate.bleu_score import sentence_bleu
 
 with open('../../archive/npr_kg_dialogue_lg.jsonl', 'r') as f:
     data = {}
@@ -72,6 +74,14 @@ for episode_id, episode_turns in data.items():
                 else:
                     raise Exception('No gold sent found')
                 gold_sent_indices[sent_to_ref_index] = 1
+
+        # Filter context sents with zero BLEU-2 score into a third class (-1). This
+        # helps us split the context sents into a set of quasi-relevant setns (0)
+        # that can be used as contrastive negative examples during training.
+        for n,sent in enumerate(episode_context):
+            b2 = sentence_bleu([sent], episode_turns['turns'][k].lower(), weights=(0.5,0.5,0,0))
+            if math.isclose(b2, 0., abs_tol=1e-2) and gold_sent_indices[sent_to_ref_index] != 1:
+                gold_sent_indices[n] = -1
 
         episode_inputs[episode_id]['turns'][k] = {
                 'gold_sent_indices': gold_sent_indices,
