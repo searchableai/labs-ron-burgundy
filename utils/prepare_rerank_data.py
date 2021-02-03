@@ -2,6 +2,7 @@ import json
 import math
 from nltk.tokenize import sent_tokenize
 from nltk.translate.bleu_score import sentence_bleu
+from tqdm import tqdm
 
 with open('../../archive/npr_kg_dialogue_lg.jsonl', 'r') as f:
     data = {}
@@ -21,7 +22,7 @@ with open('../../all_headline_archive_texts.json', 'r') as f:
 #   dialogue_history: the 0:k-1 turns of dialogue, for the k-th turn
 
 episode_inputs = {}
-for episode_id, episode_turns in data.items():
+for episode_id, episode_turns in tqdm(data.items()):
     if len(episode_inputs) % 1000 == 0:
         print(len(episode_inputs))
 
@@ -80,7 +81,7 @@ for episode_id, episode_turns in data.items():
         # that can be used as contrastive negative examples during training.
         for n,sent in enumerate(episode_context):
             b2 = sentence_bleu([sent], episode_turns['turns'][k].lower(), weights=(0.5,0.5,0,0))
-            if math.isclose(b2, 0., abs_tol=1e-2) and gold_sent_indices[sent_to_ref_index] != 1:
+            if math.isclose(b2, 0., abs_tol=1e-2) and gold_sent_indices[n] != 1:
                 gold_sent_indices[n] = -1
 
         episode_inputs[episode_id]['turns'][k] = {
