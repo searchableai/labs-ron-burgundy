@@ -87,7 +87,7 @@ def prepare_classification_eval_data(eval_data):
     dev_labels.append(sample[2])
   return dev_sentences1, dev_sentences2, dev_labels
 
-def preprocess_data(episode_inputs, window_size):
+def preprocess_data(episode_inputs, window_size, jump = 1):
   trainingd = []
   eval_data = []
 
@@ -101,8 +101,11 @@ def preprocess_data(episode_inputs, window_size):
 
     for turn, turn_info in turns.items():
       # turn_info contains gold_sent_indices and dialogue history.
-      next_turn = str(int(turn) + 1)
-      if int(next_turn) <= max_turn:
+      next_turn = str(int(turn) + jump)
+      # avoid two cases:
+      # if jump is zero -> the first turn doesn't have history
+      # next turn shouldn't exceed the max_turns.
+      if int(next_turn) <= max_turn and int(next_turn) > 0:
         # split the data for eval/training
         # for the eval, keep the history and the kg_sents for the next turn
         # for the training, form the dataset
@@ -121,14 +124,14 @@ def preprocess_data(episode_inputs, window_size):
         all_count = min(gold_count, negative_count)
 
         # # Define the windowed dialogue history
-        history_dict = turn_info['dialogue_history']
+        history_dict = turns[next_turn]['dialogue_history']
         ordered_turns = sorted([int(l) for l in list(history_dict.keys())])
         len_ = len(ordered_turns)
-        window = max(ordered_turns[-1], window_size)
+        window = min(len_, window_size)
         selected_keys = [str(l) for l in ordered_turns[len_ - window:]]
         history_dict = {k:history_dict[k] for k in selected_keys}
-        history = ' '.join(list(history_dict.values()))
-
+        history = ' '. join([history_dict[k] for k in selected_keys])
+        
         if all_count >= 1:
           if mode == "eval":
             l = {}
@@ -147,12 +150,17 @@ def preprocess_data(episode_inputs, window_size):
               if all_count != negative_count:
                 neg_sents = random.sample(neg_sents, all_count)
 
+              #ccc = 0
+              #if len(history) == 0:
+              #    ccc += 1
+              #    print(ccc)
+
               # append the data
               for gsent in gold_sents:
                 trainingd.append([history, gsent, 1])
               for nsent in neg_sents:
                 trainingd.append([history, nsent, 0])
-
+  assert sum([1 for t in trainingd if len(t[0]) == 0]) == 0, 'There are empty history strings.'
   return trainingd, eval_data
 
 def contrastive_data(episode_inputs, window_size):
@@ -212,11 +220,35 @@ if __name__ == "__main__":
   random.seed(42)
 
 
-  trainingd, eval_data = preprocess_data(episode_inputs, window_size = 5)
+  trainingd, eval_data = preprocess_data(episode_inputs, window_size = 2, jump = 1)
   training_data = []
+  print(trainingd[:10])
+  history_lengths = []
+  corpus_lengths = []
+  #model = SentenceTransformer('stsb-distilbert-base')
+  #embeddings = []
+  model = SentenceTransformer('stsb-roberta-base')
+  model.max_seq_length = 128
+  #embeddings = []
   for sample in trainingd:
-    training_data.append(InputExample(texts=[sample[0], sample[1]], label= sample[2]))
+    #import pdb; pdb.set_trace()
+    hist = ' '.join(sample[0].split()[-model.max_seq_length:])
+    assert len(hist.split()) <= model.max_seq_length, f"history {len(hist.split())} longer than the max_seq{model.max_seq_length}"
+    training_data.append(InputExample(texts=[hist, sample[1]], label= sample[2]))
+    history_lengths.append(len(sample[0].split()))
+    #max_len = max(max_len, len(sample[0].split()))
+    corpus_lengths.append(len(sample[1].split()))
+    #embedding = model.tokenize(sample[0])
+    #print(embedding)
+    #embeddings.append(embedding)
 
+  max_len = max(history_lengths)
+  mean_len = sum(history_lengths) / len(history_lengths)
+  print(f"maximum len (number of words):{max_len} and mean: {mean_len}")
+  #import pdb; pdb.set_trace()
+  max_len_c = max(corpus_lengths)
+  mean_len_c = sum(corpus_lengths) / len(corpus_lengths)
+  print(f"maximum corpus len (number of words):{max_len_c} and mean: {mean_len_c}")
   evaluators = []
 
 
@@ -227,17 +259,15 @@ if __name__ == "__main__":
   dev_sentences1, dev_sentences2, dev_labels = prepare_classification_eval_data(eval_data)
   binary_acc_evaluator = evaluation.BinaryClassificationEvaluator(dev_sentences1, dev_sentences2, dev_labels)
   evaluators.append(binary_acc_evaluator)
-
-
-  model = SentenceTransformer('stsb-distilbert-base')
+  
   train_dataset = SentencesDataset(training_data, model=model)
-  train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=16)
+  train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=52)
   distance_metric = losses.SiameseDistanceMetric.COSINE_DISTANCE
   margin = 0.5
   train_loss = losses.OnlineContrastiveLoss(model=model, distance_metric=distance_metric, margin=margin)
-  seq_evaluator = evaluation.SequentialEvaluator(evaluators, main_score_function=lambda scores: scores[0])
-  num_epochs = 5
-  model_save_path = './output/model/'
+  seq_evaluator = evaluation.SequentialEvaluator(evaluators, main_score_function=lambda scores: scores[-1])
+  num_epochs = 4
+  model_save_path = './output/texp_6_roberta_base_evalclass_64/'
   # Train the model
   model.fit(train_objectives=[(train_dataloader, train_loss)],
             evaluator=seq_evaluator,
