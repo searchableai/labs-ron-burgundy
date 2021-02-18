@@ -306,40 +306,16 @@ if __name__ == '__main__':
 
     with open("../all_data.json", 'r') as read_file:
         episode_inputs = json.load(read_file)
-
     random.seed(42)
     trainingd, eval_data = preprocess_data(episode_inputs, window_size = 2, jump = 1)
-    print(len(eval_data))
-    _, eval_data = train_test_split(eval_data, test_size=0.05, random_state=42)
-    print(len(eval_data))
+    _, eval_data = train_test_split(eval_data, test_size=0.1, random_state=42)
     model = SentenceTransformer('./output/texp_6_roberta_base_evalclass_64/')
     queries, related_corpus_per_query, relevant_docs = prepare_ir_eval_data_2(eval_data)
-    if torch.cuda.is_available():
-        model.to('cuda')
     query_ids = list(queries.keys())
-    
-    #idx = 2000
-    #import pdb; pdb.set_trace()
-    #qid = query_ids[idx]
-    #print(qid)
-    #q = {qid: queries[qid]}
-    #corpus = related_corpus_per_query[qid]
-    #r = {qid: relevant_docs[qid]}
-    #print(f'query: {q}')
     l = InformationRetrievalEvaluator(queries, related_corpus_per_query, relevant_docs, show_progress_bar = True)
     scores, query_scores= l(model)
     all_results = {}
     all_results['scores'] = scores
     all_results['query_scores'] = query_scores
-    #query_results = query_scores[0]
-    #scores_per_query = [qres['score'] for qres in query_results]
-    #import pdb; pdb.set_trace()
-    # sentences with max similarity
-    #max_query_sim = max(scores_per_query)
-    #max_query_sims = sorted(scores_per_query, reverse=True)[:5]
-    #for max_query_sim in max_query_sims:
-    #    max_sim_query = [q['corpus_id'] for q in query_results if q['score'] == max_query_sim]
-    #    print(f'Retrieved: {corpus[max_sim_query[0]]}- Score: {max_query_sim}')
     with open('eval_results.json', 'w') as write_file:
         json.dump(all_results, write_file, indent = 2)
-    #print(f'Ground Truth: {[corpus[k] for k in list(r.values())[0]]}')
