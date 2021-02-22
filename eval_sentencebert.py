@@ -11,6 +11,7 @@ from torch import Tensor, device
 import torch
 import numpy as np
 from sklearn.model_selection import train_test_split
+import pathlib
 
 logger = logging.getLogger(__name__)
 
@@ -36,85 +37,22 @@ def pytorch_cos_sim(a: Tensor, b: Tensor):
     b_norm = torch.nn.functional.normalize(b, p=2, dim=1)
     return torch.mm(a_norm, b_norm.transpose(0, 1))
 
-def preprocess_data(episode_inputs, window_size, jump = 1):
-  trainingd = []
-  eval_data = []
-
-  for episode_id, episode_info in episode_inputs.items():
-
-    turns = episode_info['turns']
-    context = episode_info['context']
-
-    # define max_turn to ensure that the next_turn does not exceed the list.
-    max_turn = max([int(l) for l in turns.keys()])
-
-    for turn, turn_info in turns.items():
-      # turn_info contains gold_sent_indices and dialogue history.
-      next_turn = str(int(turn) + jump)
-      # avoid two cases:
-      # if jump is zero -> the first turn doesn't have history
-      # next turn shouldn't exceed the max_turns.
-      if int(next_turn) <= max_turn and int(next_turn) > 0:
-        # split the data for eval/training
-        # for the eval, keep the history and the kg_sents for the next turn
-        # for the training, form the dataset
-        r = random.randint(1,100)
-
-        if r <= 10:
-          mode = "eval"
-        else:
-          mode = "training"
-
-        # Only consider the cases with at least one gold and one negative (0).
-        # The relevant sentences of next turn
-        gold_ind = turns[next_turn]['gold_sent_indices']
-        gold_count = sum([1 if l == 1 else 0 for l in gold_ind])
-        negative_count = sum([1 if l == 0 else 0 for l in gold_ind])
-        all_count = min(gold_count, negative_count)
-
-        # # Define the windowed dialogue history
-        history_dict = turns[next_turn]['dialogue_history']
-        ordered_turns = sorted([int(l) for l in list(history_dict.keys())])
-        len_ = len(ordered_turns)
-        window = min(len_, window_size)
-        selected_keys = [str(l) for l in ordered_turns[len_ - window:]]
-        history_dict = {k:history_dict[k] for k in selected_keys}
-        history = ' '. join([history_dict[k] for k in selected_keys])
-
-        if all_count >= 1:
-          if mode == "eval":
-            l = {}
-            l['queries'] = history
-            l['corpus'] = context
-            l['next_gold_ind'] = gold_ind
-            eval_data.append(l)
-
-          elif mode == "training":
-              gold_sents = [context[i] for i in range(len(context)) if gold_ind[i] == 1]
-              if all_count != gold_count:
-                gold_sents = random.sample(gold_sents, all_count)
-
-              # randomly select a subset of the negative samples
-              neg_sents = [context[i] for i in range(len(context)) if gold_ind[i] == 0]
-              if all_count != negative_count:
-                neg_sents = random.sample(neg_sents, all_count)
-
-              #ccc = 0
-              #if len(history) == 0:
-              #    ccc += 1
-              #    print(ccc)
-
-              # append the data
-              for gsent in gold_sents:
-                trainingd.append([history, gsent, 1])
-              for nsent in neg_sents:
-                trainingd.append([history, nsent, 0])
-  assert sum([1 for t in trainingd if len(t[0]) == 0]) == 0, 'There are empty history strings.'
-  return trainingd, eval_data
-
 def prepare_ir_eval_data_2(eval_data):
-    # Prepare the eval data for InformationRetrieval evaluation
+    '''
+    Prepare the evaluation data for InformationRetrieval evaluation.
+    Inputs:
+        eval_data
+            a list containing the samples. each element of the list is a dictionary
+            including 'queries', 'corpus', and 'next_gold_ind'.
 
+    Output:
+        Three dictionaries:
+            - queries where the keys are the query ids and the values are the queries.
+            - related_corpus_per_query where the keys are the query ids and the values are
+              a dictionary including the corpus related to this query.
+            - gold_sent_idx where the keys are the query ids and the values are sets
+              including the golden corpus ids.
+    '''
     queries = {}
     related_corpus_per_query = {}
     gold_sents_idx = {}
@@ -158,6 +96,7 @@ class InformationRetrievalEvaluator(SentenceEvaluator):
               if qid in relevant_docs and len(relevant_docs[qid]) > 0:
                   self.queries_ids.append(qid)
           self.queries = [queries[qid] for qid in self.queries_ids]
+          self.corpus_dict = corpus
           self.corpus = [corpus[qid] for qid in self.queries_ids]
           self.relevant_docs = relevant_docs
           self.mrr_at_k = mrr_at_k
@@ -171,37 +110,37 @@ class InformationRetrievalEvaluator(SentenceEvaluator):
 
     def __call__(self, model, output_path: str = None):
 
+
         max_k = max(max(self.mrr_at_k), max(self.ndcg_at_k), max(self.accuracy_at_k), max(self.precision_recall_at_k), max(self.map_at_k))
+
+        # Find the query embeddings.
+        # A list with the length equal to the number of queries.
+        # Each element of the list is a tensor of shape [768] (roberta-base).
         query_embeddings = model.encode(self.queries, show_progress_bar=self.show_progress_bar, batch_size=self.batch_size, convert_to_tensor=True)
-        #import pdb; pdb.set_trace()
+
         queries_result_list = [[] for _ in range(len(query_embeddings))]
-        
+        all_text = []
+        text_output = True
         # for one query:
         for qidx in tqdm(range(len(query_embeddings))):
           curpus_ids = []
           curCorp_dict = {}
           curCorp = []
           curQEmbedding = query_embeddings[qidx]
-          #import pdb; pdb.set_trace()
-          #queries_result_list = [[] for _ in range(len(query_embeddings))]
-          #print(qidx)
           curCorp_dict = self.corpus[qidx]
           corpus_ids = list(curCorp_dict.keys())
-          #import pdb; pdb.set_trace()
           curCorp = [curCorp_dict[cid] for cid in corpus_ids]
-          #import pdb; pdb.set_trace()
           corpus_embeddings = model.encode(curCorp, show_progress_bar=False, batch_size=self.batch_size, convert_to_tensor=True)
-          #import pdb; pdb.set_trace()
+          # The cos_scores has the shape: torch.Size([1, len(corpus_embeddings)])
           cos_scores = pytorch_cos_sim(curQEmbedding, corpus_embeddings)
-          #import pdb; pdb.set_trace()
           del corpus_embeddings
 
-          #Get top-k values
-          # the cos_scores should be 1 * the number of corpus articles for the following.
+          # values and indices. both torch.Size([1, 100])
           cos_scores_top_k_values, cos_scores_top_k_idx = torch.topk(cos_scores, min(max_k, len(cos_scores[0])), dim=1, largest=True, sorted=False)
-          #import pdb; pdb.set_trace()
           cos_scores_top_k_values = cos_scores_top_k_values.cpu().tolist()
           cos_scores_top_k_idx = cos_scores_top_k_idx.cpu().tolist()
+          if text_output:
+              all_text.append(self.raw_text_output(cos_scores, curCorp, qidx))  
           del cos_scores
 
           for corpus_id, score in zip(cos_scores_top_k_idx[0], cos_scores_top_k_values[0]):
@@ -209,7 +148,25 @@ class InformationRetrievalEvaluator(SentenceEvaluator):
             queries_result_list[qidx].append({'corpus_id': cid, 'score': score})
 
         scores = self.compute_metrics(queries_result_list)
-        return scores, queries_result_list
+        return scores, queries_result_list, all_text
+
+    def raw_text_output(self, cos_scores, curCorp, qidx):
+        top_k_values, top_k_idx = torch.topk(cos_scores, min(5, len(cos_scores[0])), dim=1, largest=True, sorted=True)
+        if len(cos_scores[0]) < 5: print(len(cos_scores[0]))
+        text_output = {}
+        retrieved_sample = []
+        
+        top_k_values = top_k_values.cpu().tolist()
+        top_k_idx = top_k_idx.cpu().tolist()
+        for corpus_id, score in zip(top_k_idx[0], top_k_values[0]):
+            retrieved_sample.append([score, curCorp[corpus_id]])
+        text_output['retrieved'] = retrieved_sample
+        text_output['query'] = self.queries[qidx]
+        rel = self.relevant_docs[self.queries_ids[qidx]]
+        c = self.corpus_dict[self.queries_ids[qidx]]
+        text_output['ground_truth'] = [c[l] for l in rel]
+        #import pdb;pdb.set_trace()
+        return text_output
 
     def compute_metrics(self, queries_result_list: List[object]):
         # Init score computation values
@@ -303,19 +260,46 @@ class InformationRetrievalEvaluator(SentenceEvaluator):
         return dcg
 
 if __name__ == '__main__':
+    
+    from pl_implementation_3 import SBModel
+    data_path = './data'
+    window = 10
+    jump = 1
+    eval_data_name = data_path + f'/eval_data_ws{window}_j{jump}.json'
 
-    with open("../all_data.json", 'r') as read_file:
-        episode_inputs = json.load(read_file)
-    random.seed(42)
-    trainingd, eval_data = preprocess_data(episode_inputs, window_size = 2, jump = 1)
-    _, eval_data = train_test_split(eval_data, test_size=0.1, random_state=42)
-    model = SentenceTransformer('./output/texp_6_roberta_base_evalclass_64/')
+    with open(eval_data_name, 'r') as read_file:
+        eval_data = json.load(read_file)
+
+    # In case we want to evaluate a smaller subset, uncomment the following line.
+    _, eval_data = train_test_split(eval_data, test_size=0.03, random_state=42)
+    
+
+    # The following lines can be used to load a sentence transformer model.
+    #model_path ='./output/texp_9_roberta_base_evalclass_64_margin1_256_window5/' 
+    # The following line should be linked to the pl checkpoint.
+    #model = SentenceTransformer(model_path)
+
+    model_path = "./lightning_logs/version_1/checkpoints/epoch=0-step=8786.ckpt"
+    sbmodel = SBModel.load_from_checkpoint(model_path)
+    #import pdb; pdb.set_trace()
+    model = sbmodel.model
+
+
     queries, related_corpus_per_query, relevant_docs = prepare_ir_eval_data_2(eval_data)
     query_ids = list(queries.keys())
     l = InformationRetrievalEvaluator(queries, related_corpus_per_query, relevant_docs, show_progress_bar = True)
-    scores, query_scores= l(model)
+    scores, query_scores, text_results = l(model)
     all_results = {}
+    print(f'scores : {scores}')
     all_results['scores'] = scores
     all_results['query_scores'] = query_scores
-    with open('eval_results.json', 'w') as write_file:
+    output_path = model_path + 'eval/'
+    pathlib.Path(output_path).mkdir(parents=True, exist_ok=True)
+    eval_name = output_path + f'eval_results_w{window}_j{1}.json'
+    eval_name_text = output_path + f'text_eval_results_w{window}_j{1}.json'
+    with open(eval_name, 'w') as write_file:
         json.dump(all_results, write_file, indent = 2)
+
+    with open(eval_name_text, 'w') as write_file:
+        json.dump(text_results, write_file, indent = 2)
+
