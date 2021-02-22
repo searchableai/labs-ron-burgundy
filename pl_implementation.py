@@ -19,50 +19,102 @@ from torch import nn, Tensor
 from typing import Union, Tuple, List, Iterable, Dict
 import torch.nn.functional as F
 from enum import Enum
+from torch.nn.utils.rnn import pad_sequence
+from pytorch_lightning.loggers import WandbLogger
+wandb_logger = WandbLogger()
+
+class ZeroPadCollator:
+  @staticmethod
+  def collate(batch):
+      data = []
+      anchor = {}
+      pos = {}
+      neg = {}
+
+      anch_attention = [item[0]['attention_mask'] for item in batch]
+      anch_attention = [i.transpose(0, 1) for i in anch_attention]
+      anch_attention = pad_sequence(anch_attention, batch_first=True).squeeze()
+      anchor['attention_mask'] = anch_attention
+
+      anch_inputs = [item[0]['input_ids'] for item in batch]
+      anch_inputs = [i.transpose(0, 1) for i in anch_inputs]
+      anch_inputs = pad_sequence(anch_inputs, batch_first=True).squeeze()
+      anchor['input_ids'] = anch_inputs
+
+      data.append(anchor)
+
+      pos_attention = [item[1]['attention_mask'] for item in batch]
+      pos_attention = [i.transpose(0, 1) for i in pos_attention]
+      pos_attention = pad_sequence(pos_attention, batch_first=True).squeeze()
+      pos['attention_mask'] = pos_attention
+
+      pos_inputs = [item[1]['input_ids'] for item in batch]
+      pos_inputs = [i.transpose(0, 1) for i in pos_inputs]
+      pos_inputs = pad_sequence(pos_inputs, batch_first=True).squeeze()
+      pos['input_ids'] = pos_inputs
+
+      data.append(pos)
+
+      neg_attention = [item[2]['attention_mask'] for item in batch]
+      neg_attention = [i.transpose(0, 1) for i in neg_attention]
+      neg_attention = pad_sequence(neg_attention, batch_first=True).squeeze()
+      neg['attention_mask'] = neg_attention
+
+      neg_inputs = [item[2]['input_ids'] for item in batch]
+      neg_inputs = [i.transpose(0, 1) for i in neg_inputs]
+      neg_inputs = pad_sequence(neg_inputs, batch_first=True).squeeze()
+      neg['input_ids'] = neg_inputs
+
+      data.append(neg)
+
+      return data
 
 
 class TripletsDataset(IterableDataset):
-    def __init__(self, model, queries, corpus, triplet_list):
+    def __init__(self, model, queries, corpus, triplet_list, max_seq_length):
         self.model = model
         self.queries = queries
         self.corpus = corpus
         self.triplet_list = triplet_list
+        self.max_seq_length = max_seq_length
 
     def __iter__(self):
         for l in self.triplet_list:
             qid, pos_id, neg_id = l
             #print((qid, pos_id, neg_id))
-            query_text = self.queries[qid]
-            pos_text = self.corpus[pos_id]
-            neg_text = self.corpus[neg_id]
+            query_text = self.model.tokenize(self.queries[qid])
+            pos_text = self.model.tokenize(self.corpus[pos_id])
+            neg_text = self.model.tokenize(self.corpus[neg_id])
             #yield InputExample(texts=[query_text, pos_text, neg_text])
-            yield (query_text, pos_text, neg_text)
+            yield [query_text, pos_text, neg_text]
     def __len__(self):
         return len(self.triplet_list)
 
 class LMDataModule(pl.LightningDataModule):
-  def __init__(self, model_name_or_path, training_file, train_batch_size):
+  def __init__(self, model_name_or_path, training_file, train_batch_size, max_seq_length):
     super().__init__()
     self.model_name_or_path = model_name_or_path
     self.training_file = training_file
     self.train_batch_size = train_batch_size
-    #self.window_size = window_size
-    #self.jump = jump
-    self.episode_inputs = []
+    self.max_seq_length = max_seq_length
+
+    word_embedding_model = models.Transformer(model_name_or_path, max_seq_length=self.max_seq_length)
+    pooling_model = models.Pooling(word_embedding_model.get_word_embedding_dimension())
+    self.model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
+
     self.train_dataset = []
+
 
   def prepare_data(self):
     with open(self.training_file, 'r') as read_file:
       training_data = json.load(read_file)
-    #trainingd, eval_data = preprocess_data_v2(episode_inputs, self.window_size, self.jump)
-    #self.train_queries, self.train_corpus_dict, train_corpus_inv_dict, self.train_triplet_list = prepare_training_triplet(trainingd)
+
     self.train_queries = training_data['queries']
     self.train_corpus_dict = training_data['corpus_dict']
     self.train_triplet_list = training_data['triplet_list']
-    #import pdb; pdb.set_trace()
 
   def setup(self, stage=None):
-    self.train_dataset = TripletsDataset(model=self.model_name_or_path, queries=self.train_queries, corpus=self.train_corpus_dict, triplet_list = self.train_triplet_list)
+    self.train_dataset = TripletsDataset(self.model, self.train_queries, self.train_corpus_dict, self.train_triplet_list, self.max_seq_length)
     #import pdb; pdb.set_trace()
 
   def train_dataloader(self):
@@ -70,7 +122,9 @@ class LMDataModule(pl.LightningDataModule):
     return DataLoader(
         self.train_dataset,
         shuffle=False,
-        batch_size=self.train_batch_size
+        batch_size=self.train_batch_size,
+        collate_fn = ZeroPadCollator.collate,
+        num_workers = 8
     )
   def val_dataloader(self):
       pass
@@ -78,11 +132,12 @@ class LMDataModule(pl.LightningDataModule):
       pass
 
 class SBModel(pl.LightningModule):
-    def __init__(self, model_name, learning_rate, adam_beta1, adam_beta2, adam_epsilon):
+    def __init__(self, model_name, learning_rate, adam_beta1, adam_beta2, adam_epsilon, max_seq_length):
         super().__init__()
         self.save_hyperparameters()
         #
-        word_embedding_model = models.Transformer(model_name, max_seq_length=512)
+        self.max_seq_length = max_seq_length
+        word_embedding_model = models.Transformer(model_name, max_seq_length=self.max_seq_length)
         pooling_model = models.Pooling(word_embedding_model.get_word_embedding_dimension())
         self.model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
 
@@ -91,32 +146,15 @@ class SBModel(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
         #import pdb; pdb.set_trace()
-        td = []
-        for i in range(len(batch[0])):
-            query_text = batch[0][i]
-            pos_text = batch[1][i]
-            neg_text = batch[2][i]
-           #td.append(InputExample(texts=[query_text, pos_text, neg_text]))
-            td.append([query_text, pos_text, neg_text])
-        #query_texts = [b[0]
-        #for b in batch:
-        #    import pdb; pdb.set_trace()
-        #    query_text, pos_text, neg_text = b
-        #    td.append(InputExample(texts=[query_text, pos_text, neg_text]))
-        features = []
-        for sample in td:
-          t = self.model.tokenize(sample)
-          tkeys = t.keys()
-          t = {k:t[k].to('cuda') for k in tkeys}
-          features.append(t)
-        #features = td
+
+        features = batch
         labels = None
         #import pdb; pdb.set_trace()
         train_loss = TripletLoss(model=self.model)
         #import pdb; pdb.set_trace()
         loss_value = train_loss(features, labels)
         self.log('train_loss', loss_value, on_epoch=True)
-        return train_loss
+        return loss_value
 
     def validation_step(self, batch, batch_idx):
         pass
@@ -232,18 +270,20 @@ class TripletLoss(nn.Module):
 
         reps = [self.model(sentence_feature)['sentence_embedding'] for sentence_feature in sentence_features]
 
-        r_anchor_tuple = tuple(r[0].unsqueeze(dim = 1) for r in reps)
-        rep_anchor = torch.cat(r_anchor_tuple, dim = 1)
-        rep_anchor = torch.transpose(rep_anchor, 0, 1)
+        #r_anchor_tuple = tuple(r[0].unsqueeze(dim = 1) for r in reps)
+        #rep_anchor = torch.cat(r_anchor_tuple, dim = 1)
+        #rep_anchor = torch.transpose(rep_anchor, 0, 1)
 
-        r_pos_tuple = tuple(r[1].unsqueeze(dim = 1) for r in reps)
-        rep_pos = torch.cat(r_pos_tuple, dim = 1)
-        rep_pos = torch.transpose(rep_pos, 0, 1)
+        #r_pos_tuple = tuple(r[1].unsqueeze(dim = 1) for r in reps)
+        #rep_pos = torch.cat(r_pos_tuple, dim = 1)
+        #rep_pos = torch.transpose(rep_pos, 0, 1)
 
-        r_neg_tuple = tuple(r[2].unsqueeze(dim = 1) for r in reps)
-        rep_neg = torch.cat(r_neg_tuple, dim = 1)
-        rep_neg = torch.transpose(rep_neg, 0, 1)
-
+        #r_neg_tuple = tuple(r[2].unsqueeze(dim = 1) for r in reps)
+        #rep_neg = torch.cat(r_neg_tuple, dim = 1)
+        #rep_neg = torch.transpose(rep_neg, 0, 1)
+        rep_anchor = reps[0]
+        rep_pos = reps[1]
+        rep_neg = reps[2]
         distance_pos = self.distance_metric(rep_anchor, rep_pos)
         distance_neg = self.distance_metric(rep_anchor, rep_neg)
 
@@ -251,8 +291,11 @@ class TripletLoss(nn.Module):
         return losses.mean()
 
 if __name__ == '__main__':
-    data_file = "./data/training_data_triplet_ws2-j1.json"
-    train_batch_size = 32
+    window = 2
+    jump = 1
+    data_file_name = f'/training_data_triplet_ws{window}_j{jump}.json'
+    data_file = "./data" + data_file_name
+    train_batch_size = 8
     #window_size = 2
     #jump = 1
     model_name = 'roberta-base'
@@ -260,11 +303,13 @@ if __name__ == '__main__':
     adam_beta1 = 0.9
     adam_beta2 = 0.99
     adam_epsilon = 1e-8
+    max_seq_length = 512
 
     data_module = LMDataModule(
         model_name_or_path=model_name,
         training_file=data_file,
         train_batch_size=train_batch_size,
+        max_seq_length = max_seq_length
         #window_size = window_size,
         #jump = jump
     )
@@ -275,10 +320,15 @@ if __name__ == '__main__':
         adam_beta1=adam_beta1,
         adam_beta2=adam_beta2,
         adam_epsilon=adam_epsilon,
+        max_seq_length = max_seq_length
     )
 
     # Initialize a trainer
-    trainer = pl.Trainer(gpus=1, max_epochs=3, progress_bar_refresh_rate=20)
+    trainer = pl.Trainer(gpus=-1, 
+            accumulate_grad_batches=8, 
+            precision=16, 
+            max_epochs=3,
+            progress_bar_refresh_rate=10)
 
     # Train the model ⚡
     trainer.fit(sbmodel, data_module)
