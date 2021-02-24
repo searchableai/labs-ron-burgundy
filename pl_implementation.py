@@ -103,6 +103,9 @@ class LMDataModule(pl.LightningDataModule):
     self.model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
 
     self.train_dataset = []
+    self.train_queries = {}
+    self.train_corpus_dict = {}
+    self.train_triplet_list = []
 
 
   def prepare_data(self):
@@ -132,7 +135,7 @@ class LMDataModule(pl.LightningDataModule):
       pass
 
 class SBModel(pl.LightningModule):
-    def __init__(self, model_name, learning_rate, adam_beta1, adam_beta2, adam_epsilon, max_seq_length):
+    def __init__(self, model_name, learning_rate, max_seq_length):
         super().__init__()
         self.save_hyperparameters()
         #
@@ -163,12 +166,9 @@ class SBModel(pl.LightningModule):
         pass
 
     def configure_optimizers(self):
-        optimizer = AdamW(self.parameters(),
-                          self.hparams.learning_rate,
-                          betas=(self.hparams.adam_beta1,
-                                 self.hparams.adam_beta2),
-                          eps=self.hparams.adam_epsilon,)
-        return optimizer
+        optimizer = AdamW(self.parameters(), lr=self.hparams.learning_rate)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, 10000)
+        return [optimizer], [scheduler]
 
 class MultipleNegativesRankingLoss(nn.Module):
     """
@@ -258,7 +258,7 @@ class TripletLoss(nn.Module):
         train_dataloader = DataLoader(train_dataset, shuffle=True, batch_size=train_batch_size)
         train_loss = losses.TripletLoss(model=model)
     """
-    def __init__(self, model: SentenceTransformer, distance_metric=TripletDistanceMetric.EUCLIDEAN, triplet_margin: float = 5):
+    def __init__(self, model: SentenceTransformer, distance_metric=TripletDistanceMetric.EUCLIDEAN, triplet_margin: float = 2):
         super(TripletLoss, self).__init__()
         self.model = model
         self.distance_metric = distance_metric
@@ -291,7 +291,7 @@ class TripletLoss(nn.Module):
         return losses.mean()
 
 if __name__ == '__main__':
-    window = 2
+    window = 10
     jump = 1
     data_file_name = f'/training_data_triplet_ws{window}_j{jump}.json'
     data_file = "./data" + data_file_name
@@ -300,9 +300,6 @@ if __name__ == '__main__':
     #jump = 1
     model_name = 'roberta-base'
     learning_rate = 0.001
-    adam_beta1 = 0.9
-    adam_beta2 = 0.99
-    adam_epsilon = 1e-8
     max_seq_length = 512
 
     data_module = LMDataModule(
@@ -313,22 +310,31 @@ if __name__ == '__main__':
         #window_size = window_size,
         #jump = jump
     )
-
-    sbmodel = SBModel(
-        model_name=model_name,
-        learning_rate=learning_rate,
-        adam_beta1=adam_beta1,
-        adam_beta2=adam_beta2,
-        adam_epsilon=adam_epsilon,
-        max_seq_length = max_seq_length
-    )
+        
+    model_path = "./lightning_logs/version_3/checkpoints/epoch=0-step=22061.ckpt"
+    sbmodel = SBModel.load_from_checkpoint(model_path)
+    #import pdb; pdb.set_trace()
+    #model = sbmodel.model
+    #sbmodel = SBModel(
+    #    model_name=model_name,
+    #    learning_rate=learning_rate,
+    #    max_seq_length = max_seq_length
+    #)
 
     # Initialize a trainer
     trainer = pl.Trainer(gpus=-1, 
             accumulate_grad_batches=8, 
             precision=16, 
             max_epochs=3,
-            progress_bar_refresh_rate=10)
+            progress_bar_refresh_rate=10,
+            gradient_clip_val=1,
+            #profiler="simple"
+            )
+
+    #trainer.tune(sbmodel)
+
+    #lr_finder = trainer.tuner.lr_find(model)
+    #print(lr_finder.results)
 
     # Train the model ⚡
     trainer.fit(sbmodel, data_module)
