@@ -1,0 +1,22 @@
+data:
+    max_token_length: 800
+    project_path: dummy
+    dataset_dir:
+        train: "../dataset/knowledge_dataset/train.pkl"
+        dev: "../dataset/knowledge_dataset/dev.pkl"
+        test: "../dataset/knowledge_dataset/test.pkl"
+    dataset_ratio:
+        train: 0.01 # -1  mean whole dataset
+        dev: 0.01
+        test: 0.01
+
+
+# knowledge
+# 992494
+# 124250
+# 123072
+# no knowledge
+# 992720
+# 124279
+# 123107
+    

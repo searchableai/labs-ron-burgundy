@@ -1,0 +1,51 @@
+training:
+    random_seed: 42
+    fp16: True
+    num_gpus_per_node: 8
+    batch_size: 1
+    gradient_accumulation_batches: 1
+    dataset_dir:
+        train: "/home/jinggu/Projects/knowledge_dialog/dataset/knowledge_dataset/train.pkl"
+        dev: "/home/jinggu/Projects/knowledge_dialog/dataset/knowledge_dataset/dev.pkl"
+        test: "/home/jinggu/Projects/knowledge_dialog/dataset/knowledge_dataset/test.pkl"
+    resume:
+        resume: False
+        resume_model: True
+        resume_optimizer: True
+        resume_scheduler: True
+        resume_rng_state: True
+    checkpointing:
+        async_save: false
+        directory: "Checkpoints"
+        steps_interval: 4000
+        seconds_interval: 99999999
+        num_checkpoints_to_keep: 1000
+        keep_checkpoint_every_num_seconds: 86400
+    logging:
+        level: "INFO"
+        steps_interval: -1 # disabled when negative
+        seconds_interval: 2 # disabled when `steps_interval` is set
+    optimization:
+        optimizer_name: AdamW
+        learning_rate: 1e-4
+        weight_decay: 0.01
+        max_gradient_norm: -1
+    scheduler:
+        scheduler_name: WarmupLinear
+        eta_min: 1e-6
+        warmup_steps: 0
+    evaluation:
+        batch_size: 8
+        seconds_interval: 1000
+        steps_interval: -1 # -1 for after every epoch, but will be disabled if total_num.epochs = -1
+        after_num_steps: 0
+    generation:
+        apply: True
+        batch_size: 8
+        decode_method: "beam"
+        beam_size: 4
+        max_length: 100 # default 20
+        results_direction: "../outputs/generation.pkl"
+    total_num:
+        epochs: 3
+        update_steps: -1 # disabled when total_num.epochs < 0
