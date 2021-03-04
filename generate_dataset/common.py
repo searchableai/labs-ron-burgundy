@@ -104,7 +104,7 @@ def all_grams(
 
 
 class AnswerConfidence(NamedTuple):
-    text: int
+    text: str
     score: float
     em: float
 

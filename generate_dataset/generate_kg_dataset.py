@@ -208,9 +208,9 @@ def rerank_sents(turns: List, turn_refs: Dict, top_k: int=4, min_turn_toks: int=
     turn_queries = []
     for n,turn in enumerate(turns):
         sentences = [x['text'].replace('\n', ' ') for x in turn_refs[n]['refs']]
-        scores = [x['score'] for x in turn_refs[n]['refs']]
         sentences = [sent_tokenize(x) for x in sentences]
         sentences = [y for x in sentences for y in x]
+        scores = [x['score'] for x in turn_refs[n]['refs']]
         # Exclude knowledge sents with less than 5 tokens
         sentences = [x.lower() for x in sentences if len(x.split())>5]
         total_num_sents = len(sentences)
@@ -229,7 +229,7 @@ def rerank_sents(turns: List, turn_refs: Dict, top_k: int=4, min_turn_toks: int=
         else:
             answers = ngram_overlap(sentences, ' '.join(query), remove_list)
             sorted_answers = sorted(answers, key=lambda x: x.score, reverse=True)
-            sorted_answers = [(sentences[x.n], x.score) for x in sorted_answers][:top_k]
+            sorted_answers = [(x.text, x.score) for x in sorted_answers][:top_k]
             sorted_answers = [x for x in sorted_answers if x[1] > score_thre]
         epi_sents.append(sorted_answers)
 
